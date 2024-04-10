@@ -1,0 +1,221 @@
+program = _{ SOI ~ "\n"* ~ (stmt ~ "\n"+)* ~ stmt? ~ EOI }
+
+stmt = {
+  let
+  | body
+  | alias
+  | if
+  | for
+  | log
+  | expr
+}
+
+expr = !{ expression ~ (infix_op ~ expression)* }
+
+expression = _{
+    new_class
+  | http
+  | json
+  | query
+  | static
+  | call
+  | value
+}
+
+value = _{
+    number
+  | dict
+  | nothing
+  | bool
+  | string
+  | dotted_access
+  | access_ident
+  | unit
+}
+
+if = {
+   "if" ~ expr ~ if_body
+}
+
+http = {
+    http_kw ~  
+    http_verb ~  
+    (ident | string) ~  
+    body
+}
+
+for = {
+    for_kw ~ ident ~ "in"  ~ (range | expr) 
+    ~ body
+}
+
+if_body = _{ 
+    "then" ~ NEWLINE* ~ (!end_kw ~ stmt ~ "\n"+)* ~ else_body? ~ end_kw
+} 
+
+else_body = {
+	"else" ~ NEWLINE* ~ (!end_kw ~ stmt ~ "\n"+)* ~ stmt?
+}
+
+
+body = { 
+    do_kw ~ "\n"* ~ (!(end_kw | catch) ~ stmt ~ "\n"+)* ~ (catch | stmt?) ~ end_kw
+} 
+
+catch = { catch_kw ~ ident ~ "\n"* ~ (!end_kw ~ stmt ~ "\n"+)* ~ stmt? }
+
+range = { number ~ ".." ~ number }
+
+let = _{ letfn | lete }
+
+letfn = {
+    let_kw ~ ident ~ params ~ assign ~ body
+}
+
+params = { ident ~ (ident)* }
+
+lete = {
+    let_kw ~ ident ~ assign ~ expr
+}
+
+alias = {
+    alias_kw ~ ident ~ assign ~ java_class
+}
+
+java_class = !{ "class"  ~ dotted_access }
+
+new_class = {
+    "new!" ~ aliasable ~ call_args
+}
+static = { "static!" ~ aliasable ~ call_args? }
+
+
+dict = { 
+	LBRACKET ~ NEWLINE* 
+	~ key_value ~ ("," ~ NEWLINE* ~ key_value?)*
+	~ NEWLINE*
+	~ RBRACKET 
+}
+
+key_value = {
+	string ~  ":" ~ expr
+}
+
+call = {
+    callable ~ call_args
+}
+
+call_args = { value ~ (value)* }
+
+aliasable = _{
+    dotted_access
+  | alias_ident
+}
+
+callable = _{
+    dotted_access
+  | alias_ident
+  | ident
+}
+
+query = { query_kw ~ datasource ~  query_body }
+query_body = { do_kw ~  sql* ~  end_kw }
+sql = { !end_kw ~ ANY }
+json = { 
+	json_kw ~ ident
+}
+log       = { log_kw ~  log_level ~  string }
+log_level = { "INFO" | "WARN" | "ERROR" | "DEBUG" }
+
+
+
+string = _{ fmt_string | normal_string }
+number        =  @{ ASCII_DIGIT+ }
+bool          =  @{ "true" | "false" }
+nothing       =  @{ "nothing" }
+unit          =  @{ "()" }
+
+dotted_access = { (alias_ident | ident) ~ ("." ~ ident)+ }
+alias_ident   = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+access_ident  = { ident }
+ident         = @{ !(keywords ~ !(ASCII_ALPHA | ASCII_DIGIT | "_")) ~ ident_inner }
+ident_inner         = { (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+
+datasource    =  { "niku" | "datawarehouse" }
+http_verb     = { "GET" | "POST" | "PATCH" }
+keywords = {
+	for_kw      
+	| do_kw      
+	| end_kw      
+	| query_kw    
+	| static_kw   
+	| http_kw     
+	| json_kw     
+	| let_kw
+	| alias_kw
+	| in_kw
+	| else_kw
+	| catch
+}
+
+do_kw        = _{ "do" }
+catch_kw        = _{ "catch" }
+else_kw        = _{ "else" }
+in_kw        = _{ "in" }
+let_kw        = _{ "let" }
+alias_kw        = _{ "alias" }
+for_kw        = _{ "for" }
+end_kw        = _{ "end" }
+log_kw        = _{ "log!" }
+
+query_kw      = _{ "query!" }
+static_kw     = _{ "static!" }
+http_kw       = _{ "http!" }
+json_kw       = _{ "json!" }
+
+
+fmt_string = ${
+    "f\"" ~ (fmt | character)* ~ "\""
+}
+fmt        = !{ "{" ~  expr ~ "}" }
+normal_string = {
+    "\"" ~ character* ~ "\""
+}
+character     = @{
+    !"\"" // if the following text is not ""
+    ~ ANY // then consume one character
+}
+
+
+// INFIX OPERATORS
+infix_op = _{
+	eq  
+	| neq 
+	| lt  
+	| lte 
+	| gt  
+	| gte 
+	| plus
+	| sub 
+	| mul 
+	| div
+}
+	eq   = { "==" }
+	neq  = { "!=" }
+	lt   = { "<" }
+	lte  = { "<=" }
+	gt   = { ">" }
+	gte  = { ">=" }
+	plus = { "+" }
+	sub  = { "-" }
+	mul  = { "*" }
+	div  = { "/" }
+
+assign = _{ "=" }
+LBRACKET = _{ "{" }
+RBRACKET = _{ "}" }
+
+WHITESPACE = _{ " " | "\t" }
+COMMENT = _{ "(*" ~ (!"*)" ~ ANY)* ~ "*)" }
+
+allws = _{ " " | "\t" | NEWLINE }

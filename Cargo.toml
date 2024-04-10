@@ -1,0 +1,20 @@
+[package]
+name = "gel-lang"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gelatin"
+path = "./src/main.rs"
+
+[lib]
+path = "./src/lib.rs"
+
+[dependencies]
+clap = { version = "4.5.4", features = ["derive", "unstable-v5"] }
+lazy_static = "1.4.0"
+miette = { version = "7.2.0", features = ["fancy"] }
+pest = "2.7.9"
+pest_derive = "2.7.9"
+sqlparser = "0.44.0"
+thiserror = "1.0.58"
