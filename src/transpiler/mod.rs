@@ -1,13 +1,8 @@
 pub mod tags;
 
-use std::{
-    collections::HashMap,
-    io::{self, Write},
-};
+use std::collections::HashMap;
 
-use crate::gelatin::ast::{
-    Call, Context, Expr, HttpVerb, Ident, Name, Node, QueryType, Stmt, Value,
-};
+use crate::gelatin::ast::{Call, Expr, HttpVerb, Ident, Name, Node, QueryType, Stmt, Value};
 
 use self::tags::{Core, Gel, Sql, Tag};
 
@@ -26,14 +21,12 @@ enum Libraries {
 }
 
 pub struct Transpiler {
-    tags: Vec<Tag>,
     env: HashMap<String, Expr>,
 }
 
 impl Transpiler {
     pub fn new() -> Self {
         Self {
-            tags: Vec::new(),
             env: HashMap::new(),
         }
     }
@@ -41,12 +34,15 @@ impl Transpiler {
     pub fn as_tags(&mut self, node: Node) -> Tag {
         match node {
             Node::Stmt(stmt) => self.transpile_node(stmt),
-            Node::Expr(expr) => todo!("handle expr: {expr:#?}"),
+            Node::Expr(expr) => self.transpile_node(Stmt::Expr { expr }),
         }
     }
 
     pub fn transpile_node(&mut self, stmt: Stmt) -> Tag {
         match stmt {
+            Stmt::Expr {
+                expr: qry @ Expr::Query { .. },
+            } => self.query("_".into(), qry),
             Stmt::Expr { expr } => Tag::Core(Core::Expr { expr }),
             Stmt::Let(name, value @ Expr::Value(_)) => Tag::Core(Core::Set { var: name, value }),
             Stmt::Let(name, Expr::Instance { class, args }) => Tag::Core(Core::New {
@@ -277,29 +273,7 @@ impl Transpiler {
                         .collect(),
                 })
             }
-            Stmt::Let(
-                name,
-                Expr::Query {
-                    datasource,
-                    r#type,
-                    query,
-                },
-            ) => {
-                let sql = match r#type {
-                    QueryType::SELECT => Sql::Query {
-                        var: name,
-                        sql: query.to_string(),
-                    },
-                    QueryType::UPDATE | QueryType::INSERT | QueryType::DELETE => Sql::Update {
-                        var: name,
-                        sql: query.to_string(),
-                    },
-                };
-                Tag::Macro(vec![
-                    Tag::Gel(Gel::SetDatasource { db_id: datasource }),
-                    Tag::Sql(sql),
-                ])
-            }
+            Stmt::Let(name, query @ Expr::Query { .. }) => self.query(name, query),
             Stmt::Let(name, expr) => Tag::Core(Core::Set {
                 var: name,
                 value: expr,
@@ -402,33 +376,31 @@ impl Transpiler {
             }));
         }
     }
-}
 
-fn create_json<W: io::Write>(
-    map: &HashMap<String, Expr>,
-    bind_to: &str,
-    write_to: &mut io::BufWriter<W>,
-) -> io::Result<()> {
-    writeln!(
-        write_to,
-        "<core:new className='org.json.JSONObject' var='{bind_to}_payload'/>"
-    )?;
+    fn query(&self, name: Ident, expr: Expr) -> Tag {
+        match expr {
+            Expr::Query {
+                datasource,
+                r#type,
+                query,
+            } => {
+                let sql = match r#type {
+                    QueryType::SELECT => Sql::Query {
+                        var: name,
+                        sql: query.to_string(),
+                    },
+                    QueryType::UPDATE | QueryType::INSERT | QueryType::DELETE => Sql::Update {
+                        var: name,
+                        sql: query.to_string(),
+                    },
+                };
 
-    for (k, v) in map {
-        if let Expr::Dict(inner) = v {
-            create_json(inner, &format!("{bind_to}_{}", k.as_str()), write_to)?;
-            writeln!(
-                write_to,
-                "<core:expr value='${{{bind_to}_payload.put(\"{k}\", k)}}'/>"
-            )?
-        } else {
-            writeln!(
-                write_to,
-                "<core:expr value='${{{bind_to}_payload.put(\"{k}\", {})}}'/>",
-                v.as_value(Context::Expr)
-            )?
+                Tag::Macro(vec![
+                    Tag::Gel(Gel::SetDatasource { db_id: datasource }),
+                    Tag::Sql(sql),
+                ])
+            }
+            _ => unreachable!(),
         }
     }
-
-    Ok(())
 }

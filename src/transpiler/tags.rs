@@ -1,5 +1,3 @@
-use std::fmt::Pointer;
-
 use crate::gelatin::ast::{Context, Datasource, Expr, Ident, LogLevel, Name};
 
 pub enum Gel {
@@ -11,8 +9,12 @@ pub enum Gel {
     },
     /// <gel:setDatasource dbId="niku"/>
     SetDatasource { db_id: Datasource },
+    Script {
+        body: Vec<Tag>,
+    }
 }
 
+#[derive(Debug)]
 pub enum Sql {
     Query { var: Ident, sql: String },
     Update { var: Ident, sql: String },
@@ -170,22 +172,12 @@ pub enum Core {
     Include,
     //A tag which calls a method in an object instantied by core:new
     Invoke,
-    //The root Jelly tag which should be evaluated first
-    Jelly,
     //A tag which executes its body but passing no output. Using this tag will still take the time to perform toString on each objectreturned to the output (but this toString value is discarded.A future version should go more internally so that this is avoided.
     Mute,
-    //Parses the output of this tags body or of a given String as a Jelly scriptthen either outputting the Script as a variable or executing the script.
-    Parse,
-    //A tag which removes the variable of the given name from the current variable scope.
-    Remove,
     //A tag which sets the bean properties on the given bean.So if you used it as follows, for example using the <j:new>tag. <j:new className="com.acme.Person" var="person"/> <j:setProperties object="${person}" name="James" location="${loc}"/> Then it would set the name and location properties on the bean denoted bythe expression ${person}. This tag can also be nested inside a bean tag such as the <useBean>tagor a JellySwing tag to set one or more properties, maybe inside some conditionallogic.
     SetProperties,
     //Executes the child <case>tag whose value equals my on attribute.Executes a child <default>tag when present and no <case>tag hasyet matched.
     Switch,
-    //A tag that spawns the contained script in a separate thread
-    Thread,
-    //A tag which instantiates an instance of the given classand then sets the properties on the bean.The class can be specified via a java.lang.Classinstance ora String which will be used to load the class using either the currentthread's context class loader or the class loader used to load thisJelly library.This tag can be used it as follows, <j:useBean var="person" class="com.acme.Person" name="James" location="${loc}"/> <j:useBean var="order" class="${orderClass}" amount="12" price="123.456"/>
-    UseBean,
     //A tag which creates a List implementation and optionallyadds all of the elements identified by the items attribute.The exact implementation of List can be specified via theclass attribute
     UseList,
     //A tag which performs an iteration while the result of an expression is true.
@@ -205,6 +197,7 @@ pub enum Tag {
     Macro(Vec<Tag>),
     Noop,
 }
+
 impl std::fmt::Display for Gel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -221,6 +214,7 @@ impl std::fmt::Display for Gel {
                 )
             }
             Gel::SetDatasource { db_id } => writeln!(f, "<gel:setDataSource dbId='{db_id}'/>"),
+            Gel::Script { body: _ } => todo!(),
         }
     }
 }
@@ -386,14 +380,9 @@ impl std::fmt::Display for Core {
                 }
                 writeln!(f, "</core:otherwise>")
             }
-            Core::Jelly => todo!(),
             Core::Mute => todo!(),
-            Core::Parse => todo!(),
-            Core::Remove => todo!(),
             Core::SetProperties => todo!(),
             Core::Switch => todo!(),
-            Core::Thread => todo!(),
-            Core::UseBean => todo!(),
             Core::UseList => todo!(),
             Core::Whitespace => todo!(),
         }
@@ -415,7 +404,7 @@ impl std::fmt::Display for Sql {
                     "<sql:update escapeText='false' var='{var}'><![CDATA[/*sql*/{sql}]]></sql:update>"
                 )
             }
-            Sql::Param { value } => todo!(),
+            Sql::Param { value: _ } => todo!(),
         }
     }
 }

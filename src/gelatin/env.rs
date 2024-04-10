@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-
 #[derive(Debug, Clone)]
 pub(crate) enum Env<T> {
     Parent(HashMap<String, T>),

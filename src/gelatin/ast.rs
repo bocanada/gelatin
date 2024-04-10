@@ -264,7 +264,7 @@ impl TryFrom<&str> for Datasource {
         match value {
             "niku" => Ok(Self::Niku),
             "datawarehouse" => Ok(Self::Dwh),
-            val => Err(Error::ValueError {
+            val => Err(Error::Value {
                 message: format!("expected \"niku\" or \"datawarehouse\", got: {val}"),
             }),
         }
@@ -279,7 +279,7 @@ impl TryFrom<&str> for HttpVerb {
             "GET" => Ok(Self::GET),
             "POST" => Ok(Self::POST),
             "PATCH" => Ok(Self::PATCH),
-            val => Err(Error::ValueError {
+            val => Err(Error::Value {
                 message: format!("not an http verb: {val}"),
             }),
         }
@@ -371,7 +371,6 @@ impl Expr {
 
                 buff
             }
-            Expr::Static(_) => todo!(),
             Expr::Dict(map) => {
                 let mut buff = String::new();
                 let _ = write!(buff, "{{");
@@ -392,6 +391,7 @@ impl Expr {
             | Expr::Instance { .. }
             | Expr::Range { .. }
             | Expr::Alias(_)
+            | Expr::Static(_)
             | Expr::Func { .. } => unreachable!("{self:?}"),
             Expr::Infix { lhs, op, rhs } => {
                 if matches!(ctx, Context::Text) {

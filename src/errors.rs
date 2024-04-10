@@ -47,5 +47,5 @@ pub enum Error {
 
     #[error("value error: {message}")]
     #[diagnostic(code(gelatin::value_error))]
-    ValueError { message: String },
+    Value { message: String },
 }

@@ -326,7 +326,6 @@ impl<'a> GelatinParser<'a> {
     fn expr_from(&mut self, pair: Pairs<Rule>) -> miette::Result<Expr> {
         PRATT
             .map_primary(|pair| {
-                println!("PARSING {:?}", pair.as_rule());
                 match pair.as_rule() {
                     Rule::unit => Ok(Expr::Value(Value::Unit)),
                     Rule::bool => Ok(Expr::Value(Value::Bool(pair.as_str() == "true"))),
@@ -502,7 +501,6 @@ impl<'a> GelatinParser<'a> {
                         Ok(Expr::Dict(dict))
                     }
                     Rule::query => {
-                        eprintln!("hello??");
                         let mut qpair = pair.clone().into_inner();
                         let ds: Datasource = qpair.next().unwrap().as_str().try_into()?;
 
@@ -594,7 +592,6 @@ impl<'a> GelatinParser<'a> {
     }
 
     fn stmt_from(&mut self, pair: pest::iterators::Pair<Rule>) -> miette::Result<Stmt> {
-        println!("PARSING STMT {:?}", pair.as_rule());
         match pair.as_rule() {
             Rule::expression | Rule::expr => {
                 let expr = self.expr_from(pair.into_inner())?;
