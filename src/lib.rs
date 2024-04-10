@@ -13,11 +13,30 @@ use transpiler::{tags::Tag, Transpiler};
 #[command(version, about)]
 pub struct Args {
     file: PathBuf,
+
+    /// Where to output the GEL script to.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
 }
 
 impl Args {
     pub fn file_name(&self) -> &str {
         self.file.to_str().unwrap()
+    }
+
+    pub fn writer(&self) -> io::Result<io::BufWriter<Box<dyn io::Write>>> {
+        if let Some(ref output) = self.output {
+            let output = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(output)?;
+            Ok(io::BufWriter::new(Box::new(output)))
+        } else {
+            let stdout = std::io::stdout();
+            let stdout = stdout.lock();
+            Ok(io::BufWriter::new(Box::new(stdout)))
+        }
     }
 
     pub fn read_file_to_string(&self) -> io::Result<String> {
