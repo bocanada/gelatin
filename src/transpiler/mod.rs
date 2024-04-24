@@ -62,7 +62,8 @@ impl<W: io::Write> Transpiler<W> {
         self.writer.write(
             XmlEvent::start_element(Gel::Script)
                 .ns("gel", "jelly:com.niku.union.gel.GELTagLibrary")
-                .ns("core", "jelly:core"),
+                .ns("core", "jelly:core")
+                .ns("sql", "jelly:sql"),
         )?;
 
         for node in it {
