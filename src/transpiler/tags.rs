@@ -9,7 +9,7 @@ pub enum Gel {
     Log,
     /// # Example:
     /// ```xml
-    /// <gel:setDatasource dbId="niku"/>
+    /// <gel:setDataSource dbId="niku"/>
     /// ```
     SetDatasource,
     /// # Example:
@@ -215,7 +215,7 @@ impl Gel {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Log => "gel:log",
-            Self::SetDatasource => "gel:setDatasource",
+            Self::SetDatasource => "gel:setDataSource",
             Self::Script => "gel:script",
         }
     }
