@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
-pub(crate) enum Env<T> {
+pub enum Env<T> {
     Parent(HashMap<String, T>),
     Child {
         parent: Box<Env<T>>,
@@ -26,10 +26,10 @@ where
         }
     }
 
-    pub(crate) fn resolve(&self, key: &str) -> Option<&T> {
+    pub fn resolve(&self, key: &str) -> Option<&T> {
         match self {
-            Env::Parent(bindings) => bindings.get(key),
-            Env::Child { parent, bindings } => {
+            Self::Parent(bindings) => bindings.get(key),
+            Self::Child { parent, bindings } => {
                 if let Some(expr) = bindings.get(key) {
                     return Some(expr);
                 }
@@ -38,10 +38,10 @@ where
         }
     }
 
-    pub(crate) fn bind(&mut self, key: String, val: T) -> Option<T> {
+    pub fn bind(&mut self, key: String, val: T) -> Option<T> {
         match self {
-            Env::Parent(bindings)
-            | Env::Child {
+            Self::Parent(bindings)
+            | Self::Child {
                 parent: _,
                 bindings,
             } => bindings.insert(key, val),

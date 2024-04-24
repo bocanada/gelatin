@@ -27,6 +27,30 @@ pub enum Error {
         err: String,
     },
 
+    #[error("xml syntax error")]
+    #[diagnostic(code(gelatin::xml_syntax_error))]
+    XmlSyntax {
+        #[source_code]
+        source_code: NamedSource<String>,
+        #[label("here")]
+        at: SourceSpan,
+
+        #[help]
+        err: String,
+    },
+
+    #[error("sql param error")]
+    #[diagnostic(code(gelatin::sql_parameter_mismatch))]
+    SqlParamErr {
+        #[source_code]
+        source_code: NamedSource<String>,
+        #[label("here")]
+        at: SourceSpan,
+
+        #[help]
+        err: String,
+    },
+
     #[error("alias is unbound error")]
     #[diagnostic(code(gelatin::unbound_alias))]
     UnboundAlias {

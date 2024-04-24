@@ -1,26 +1,45 @@
-use crate::gelatin::ast::{Context, Datasource, Expr, Ident, LogLevel, Name};
+use xml::name::Name;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Gel {
+    /// # Example:
+    /// ```xml
     /// <gel:log level='{level}' category='' message='{message}'/>
-    Log {
-        level: LogLevel,
-        category: Option<String>,
-        message: String,
-    },
+    /// ```
+    Log,
+    /// # Example:
+    /// ```xml
     /// <gel:setDatasource dbId="niku"/>
-    SetDatasource { db_id: Datasource },
-    Script {
-        body: Vec<Tag>,
-    }
+    /// ```
+    SetDatasource,
+    /// # Example:
+    /// ```xml
+    /// <gel:script .../>
+    /// ```
+    Script,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Sql {
-    Query { var: Ident, sql: String },
-    Update { var: Ident, sql: String },
-    Param { value: Expr },
+    Query,
+    Update,
+    Param,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Soap {
+    Invoke,
+    Message,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SoapEnv {
+    Envelope,
+    Header,
+    Body,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Core {
     /// A tag which evaluates an expression.
     ///
@@ -28,19 +47,14 @@ pub enum Core {
     /// ```xml
     /// <core:expr value='${1 + 1}'/>
     /// ```
-    Expr {
-        expr: Expr,
-    },
+    Expr,
     /// A tag which sets a variable from the result of an expression.
     ///
     /// # Example:
     /// ```xml
     /// <core:set var='name' value='${1 + 1}'/>
     /// ```
-    Set {
-        var: Ident,
-        value: Expr,
-    },
+    Set,
     /// Iterates over a collection, iterator or an array of objects.
     /// Uses the same syntax as the JSTL `forEach` tag does.
     ///
@@ -50,11 +64,7 @@ pub enum Core {
     ///
     /// </core:forEach>
     /// ```
-    ForEach {
-        var: Ident,
-        items: Expr,
-        body: Vec<Tag>,
-    },
+    ForEach,
     /// An argument to a `org.apache.commons.jelly.tags.core.NewTag` or `org.apache.commons.jelly.tags.core.InvokeTag`.
     /// This tag MUST be enclosed within an `org.apache.commons.jelly.tags.core.ArgTagParentimplementation`.
     /// A tag which terminates the execution of the current <forEach> or <while> loop.
@@ -63,10 +73,7 @@ pub enum Core {
     /// ```xml
     /// <core:arg type='java.io.InputStream' value='${input_stream}'/>
     /// ```
-    Arg {
-        r#type: Option<Name>,
-        value: Expr,
-    },
+    Arg,
     /// This tag can take an optional boolean test attribute which if its true then the break occurs otherwise, the loop continues processing.
     ///
     /// # Example:
@@ -77,9 +84,7 @@ pub enum Core {
     /// ```xml
     /// <core:break/>
     /// ```
-    Break {
-        test: Option<Expr>,
-    },
+    Break,
     /// A tag which creates a new child variable scope for its body.So any variables defined within its body will no longer be in scopeafter this tag.
     ///
     /// # Example:
@@ -88,59 +93,30 @@ pub enum Core {
     ///     <core:set var='scoped_var' value='123'/>
     /// </core:scope>
     /// ```
-    Scope {
-        body: Vec<Tag>,
-    },
+    Scope,
     /// A tag which creates a new object of the given type.
     ///
     /// Example:
     /// ```xml
     /// <core:new className='org.json.JSONObject' var='conn_object_payload'/>
     /// ```
-    New {
-        /// The class name.
-        class_name: Name,
-        /// The variable to bind this instance to.
-        var: Ident,
-        /// A vector of `Core::Arg`
-        args: Vec<Core>,
-    },
+    New,
     /// A Tag which can invoke a static method on a class, without aninstance of the class being needed.
     /// Like the org.apache.commons.jelly.tags.core.InvokeTag, this tag can take a set ofarguments using the org.apache.commons.jelly.tags.core.ArgTag.
-    InvokeStatic {
-        /// The variable to assign the return of the method call to method
-        var: Ident,
-        /// The name of the static method to invoke className
-        method: Ident,
-        /// The name of the class containing the static method
-        class_name: Name,
-
-        args: Vec<Core>,
-    },
+    /// # Example: TODO
+    InvokeStatic,
     /// A tag which conditionally evaluates its body based on some condition.
-    Choose {
-        // Vec<Core::When>
-        branches: Vec<Core>,
-    },
+    Choose,
     /// A tag which conditionally evaluates its body based on some condition.
-    When {
-        test: Expr,
-        body: Vec<Tag>,
-    },
+    When,
     /// The otherwise block of a choose/when group of tags
-    Otherwise {
-        body: Vec<Tag>,
-    },
-
+    Otherwise,
     /// A tag which conditionally evaluates its body if my value attribute equals my ancestor <switch> tag's "on" attribute.
     /// This tag must be contained within the body of some <switch> tag.
     Case,
     ///A tag which catches exceptions thrown by its body.
     ///This allows conditional logic to be performed based on if exceptionsare thrown or to do some kind of custom exception logging logic.
-    Catch {
-        var: Ident,
-        body: Vec<Tag>,
-    },
+    Catch,
     /// A tag which conditionally evaluates its body if none of its preceeding sibling <case> tags have been evaluated.
     /// This tag must be contained within the body of some <switch> tag.
     Default,
@@ -156,20 +132,14 @@ pub enum Core {
     /// ```xml
     /// <j:getStatic var="closeOperation" className="javax.swing.JFrame" field="EXIT_ON_CLOSE"/>
     /// ```
-    GetStatic {
-        var: Ident,
-        class_name: Name,
-        field: Ident,
-    },
-    //A tag which conditionally evaluates its body based on some condition
-    If {
-        test: Expr,
-        body: Vec<Tag>,
-    },
-    //Imports another script. By default, the imported script does not have access tothe parent script's variable context. This behaviourmay be modified using the inherit attribute.
-    Import,
-    //A tag which conditionally evaluates its body based on some condition
-    Include,
+    GetStatic,
+    /// A tag which conditionally evaluates its body based on some condition
+    /// # Example:
+    /// ```xml
+    /// <core:if test="true">
+    ///   <core:set var="isStrue" value="true"/>
+    /// </core:if>
+    If,
     //A tag which calls a method in an object instantied by core:new
     Invoke,
     //A tag which executes its body but passing no output. Using this tag will still take the time to perform toString on each objectreturned to the output (but this toString value is discarded.A future version should go more internally so that this is avoided.
@@ -178,251 +148,104 @@ pub enum Core {
     SetProperties,
     //Executes the child <case>tag whose value equals my on attribute.Executes a child <default>tag when present and no <case>tag hasyet matched.
     Switch,
-    //A tag which creates a List implementation and optionallyadds all of the elements identified by the items attribute.The exact implementation of List can be specified via theclass attribute
+    /// A tag which creates a List implementation and optionallyadds all of the elements identified by the items attribute.The exact implementation of List can be specified via theclass attribute
     UseList,
-    //A tag which performs an iteration while the result of an expression is true.
-    While {
-        test: Expr,
-        body: Vec<Tag>,
-    },
+    /// A tag which performs an iteration while the result of an expression is true.
+    /// # Example
+    /// ```xml
+    /// <core:while test="true">
+    ///     <core:break/>
+    /// </core:while>
+    /// ```
+    While,
     //A simple tag used to preserve whitespace inside its body
     Whitespace,
 }
 
-pub enum Tag {
-    Core(Core),
-    Gel(Gel),
-    Sql(Sql),
-    Text(Expr),
-    Macro(Vec<Tag>),
-    Noop,
+impl From<Core> for Name<'static> {
+    fn from(value: Core) -> Self {
+        value.as_str().into()
+    }
 }
 
-impl std::fmt::Display for Gel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl From<Gel> for Name<'static> {
+    fn from(value: Gel) -> Self {
+        value.as_str().into()
+    }
+}
+
+impl From<Sql> for Name<'static> {
+    fn from(value: Sql) -> Self {
+        value.as_str().into()
+    }
+}
+
+impl Core {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Gel::Log {
-                level,
-                category,
-                message,
-            } => {
-                writeln!(
-                    f,
-                    "<gel:log category='{}' level='{}' message='{message}'/>",
-                    category.clone().unwrap_or_default(),
-                    level.as_str(),
-                )
-            }
-            Gel::SetDatasource { db_id } => writeln!(f, "<gel:setDataSource dbId='{db_id}'/>"),
-            Gel::Script { body: _ } => todo!(),
+            Self::Expr => "core:expr",
+            Self::Set => "core:set",
+            Self::ForEach => "core:forEach",
+            Self::Arg => "core:arg",
+            Self::Break => "core:break",
+            Self::Scope => "core:scope",
+            Self::New => "core:new",
+            Self::InvokeStatic => "core:invokeStatic",
+            Self::Choose => "core:choose",
+            Self::When => "core:when",
+            Self::Otherwise => "core:otherwise",
+            Self::Case => "core:case",
+            Self::Catch => "core:catch",
+            Self::Default => "core:default",
+            Self::File => "core:file",
+            Self::GetStatic => "core:getStatic",
+            Self::If => "core:if",
+            Self::Invoke => "core:invoke",
+            Self::Mute => "core:mute",
+            Self::SetProperties => "core:setProperties",
+            Self::Switch => "core:switch",
+            Self::UseList => "core:useList",
+            Self::While => "core:while",
+            Self::Whitespace => "core:whitespace",
         }
     }
 }
 
-impl std::fmt::Display for Core {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Gel {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Core::Expr { expr } => {
-                writeln!(f, "<core:expr value='{}'/>", expr.as_value(Context::Text))
-            }
-            Core::Set { var, value } => {
-                writeln!(
-                    f,
-                    "<core:set value='{}' var='{var}'/>",
-                    value.as_value(Context::Text)
-                )
-            }
-            Core::ForEach {
-                var,
-                items: Expr::Range { start, end, step },
-                body,
-            } => {
-                writeln!(
-                    f,
-                    "<core:forEach var='{var}' start='{start}' end='{end}' step ='{step}'>"
-                )?;
-
-                for stmt in body {
-                    stmt.fmt(f)?
-                }
-
-                writeln!(f, "</core:forEach>")
-            }
-            Core::ForEach { var, items, body } => {
-                writeln!(
-                    f,
-                    "<core:forEach var='{var}' items='{}'>",
-                    items.as_value(Context::Text)
-                )?;
-
-                for stmt in body {
-                    stmt.fmt(f)?
-                }
-
-                writeln!(f, "</core:forEach>")
-            }
-            Core::New {
-                class_name,
-                var,
-                args,
-            } => {
-                // <core:new className='java.io.InputStreamReader' var='input_reader'>
-                // <core:arg type='java.io.InputStream' value='${input_stream}' />
-                // </core:new>
-                write!(f, "<core:new className='{class_name}' var='{var}'",)?;
-
-                if args.is_empty() {
-                    writeln!(f, "/>")
-                } else {
-                    writeln!(f, ">")?;
-
-                    for arg in args {
-                        arg.fmt(f)?;
-                    }
-                    writeln!(f, "</core:new>")
-                }
-            }
-            Core::Arg { r#type, value } => {
-                let ty = match r#type {
-                    Some(ty) => format!("type='{ty}'"),
-                    None => "".to_string(),
-                };
-                writeln!(
-                    f,
-                    "<core:arg {} value='{}'/>",
-                    ty,
-                    value.as_value(Context::Text)
-                )
-            }
-            Core::Scope { body } => {
-                write!(f, "<core:scope>")?;
-                for stmt in body {
-                    stmt.fmt(f)?;
-                }
-                write!(f, "</core:scope>")
-            }
-            Core::While { test, body } => {
-                writeln!(f, "<core:while test='{}'>", test.as_value(Context::Text))?;
-                for stmt in body {
-                    stmt.fmt(f)?
-                }
-                writeln!(f, "</core:while>")
-            }
-            Core::Break { test: None } => writeln!(f, "<core:break/>"),
-            Core::Break { test: Some(test) } => {
-                writeln!(f, "<core:break test='{}'/>", test.as_value(Context::Text))
-            }
-            Core::Case => todo!(),
-            Core::Catch { var, body } => {
-                writeln!(f, "<core:catch var='{var}'>")?;
-                for stmt in body {
-                    stmt.fmt(f)?;
-                }
-
-                writeln!(f, "</core:catch>")
-            }
-            Core::Default => todo!(),
-            Core::File => todo!(),
-            Core::GetStatic {
-                var,
-                class_name,
-                field,
-            } => writeln!(
-                f,
-                "<core:getStatic var='{var}' className='{class_name}' field='{field}'/>"
-            ),
-            Core::If { test, body } => {
-                writeln!(f, "<core:if test='{}'>", test.as_value(Context::Text))?;
-                for stmt in body {
-                    stmt.fmt(f)?;
-                }
-                writeln!(f, "</core:if>")
-            }
-            Core::Import => todo!(),
-            Core::Include => todo!(),
-            Core::Invoke => todo!(),
-            Core::InvokeStatic {
-                var,
-                class_name,
-                method,
-                args,
-            } => {
-                writeln!(
-                    f,
-                    "<core:invokeStatic var='{var}' className='{class_name}' method='{method}'>"
-                )?;
-
-                for arg in args {
-                    arg.fmt(f)?;
-                }
-
-                writeln!(f, "</core:invokeStatic>")
-            }
-            Core::Choose { branches } => {
-                writeln!(f, "<core:choose>")?;
-                for branch in branches {
-                    branch.fmt(f)?;
-                }
-
-                writeln!(f, "</core:choose>")
-            }
-            Core::When { test, body } => {
-                writeln!(f, "<core:when test='{}'>", test.as_value(Context::Text))?;
-                for stmt in body {
-                    stmt.fmt(f)?;
-                }
-                writeln!(f, "</core:when>")
-            }
-            Core::Otherwise { body } => {
-                writeln!(f, "<core:otherwise>")?;
-                for stmt in body {
-                    stmt.fmt(f)?;
-                }
-                writeln!(f, "</core:otherwise>")
-            }
-            Core::Mute => todo!(),
-            Core::SetProperties => todo!(),
-            Core::Switch => todo!(),
-            Core::UseList => todo!(),
-            Core::Whitespace => todo!(),
+            Self::Log => "gel:log",
+            Self::SetDatasource => "gel:setDatasource",
+            Self::Script => "gel:script",
         }
     }
 }
 
-impl std::fmt::Display for Sql {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Soap {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Sql::Query { var, sql } => {
-                writeln!(
-                    f,
-                    "<sql:query escapeText='false' var='{var}'><![CDATA[/*sql*/ {sql}]]></sql:query>"
-                )
-            }
-            Sql::Update { var, sql } => {
-                writeln!(
-                    f,
-                    "<sql:update escapeText='false' var='{var}'><![CDATA[/*sql*/{sql}]]></sql:update>"
-                )
-            }
-            Sql::Param { value: _ } => todo!(),
+            Self::Invoke => "soap:invoke",
+            Self::Message => "soap:message",
         }
     }
 }
 
-impl std::fmt::Display for Tag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl SoapEnv {
+    pub const fn as_str(self) -> &'static str {
         match self {
-            Tag::Core(core) => core.fmt(f),
-            Tag::Gel(gel) => gel.fmt(f),
-            Tag::Macro(tags) => {
-                for tag in tags {
-                    tag.fmt(f)?;
-                }
-                Ok(())
-            }
-            Tag::Text(_) => todo!(),
-            Tag::Noop => Ok(()),
-            Tag::Sql(sql) => sql.fmt(f),
+            Self::Envelope => "soapenv:Envelope",
+            Self::Header => "soapenv:Header",
+            Self::Body => "soapenv:Body",
+        }
+    }
+}
+
+impl Sql {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Query => "sql:query",
+            Self::Update => "sql:update",
+            Self::Param => "sql:param",
         }
     }
 }

@@ -1,7 +1,7 @@
-program = _{ SOI ~ "\n"* ~ (stmt ~ "\n"+)* ~ stmt? ~ EOI }
+program = _{ SOI ~ NEWLINE* ~ (stmt ~ NEWLINE+)* ~ stmt? ~ EOI }
 
 stmt = {
-  let
+    let
   | body
   | alias
   | if
@@ -18,6 +18,7 @@ expression = _{
   | json
   | query
   | static
+  | soap
   | call
   | value
 }
@@ -33,36 +34,47 @@ value = _{
   | unit
 }
 
+soap = {
+    soap_kw ~ string ~ soap_body
+}
+
+soap_body = {
+    do_kw ~ NEWLINE* 
+    ~ (!end_kw ~ (soap_message_body | soap_message_header) ~ NEWLINE+)* 
+    ~ (soap_message_body | soap_message_header)? ~ end_kw
+}
+
+soap_message_body   = { "body" ~ xml_body }
+soap_message_header = { "header" ~ xml_body }
+
+xml_body = ${ do_kw ~ (fmt | xml_str)* ~ end_kw }
+xml_str  = { !end_kw ~ ANY }
+
 if = {
-   "if" ~ expr ~ if_body
+    "if" ~ expr ~ if_body
 }
 
 http = {
-    http_kw ~  
-    http_verb ~  
-    (ident | string) ~  
-    body
+    http_kw ~ http_verb ~ (ident | string) ~ body
 }
 
 for = {
-    for_kw ~ ident ~ "in"  ~ (range | expr) 
-    ~ body
+    for_kw ~ ident ~ "in" ~ (range | expr) ~ body
 }
 
-if_body = _{ 
-    "then" ~ NEWLINE* ~ (!end_kw ~ stmt ~ "\n"+)* ~ else_body? ~ end_kw
-} 
+if_body = _{
+    "then" ~ NEWLINE* ~ (!end_kw ~ stmt ~ NEWLINE+)* ~ else_body? ~ end_kw
+}
 
 else_body = {
-	"else" ~ NEWLINE* ~ (!end_kw ~ stmt ~ "\n"+)* ~ stmt?
+    "else" ~ NEWLINE* ~ (!end_kw ~ stmt ~ NEWLINE+)* ~ stmt?
 }
 
+body = {
+    do_kw ~ NEWLINE* ~ (!(end_kw | catch) ~ stmt ~ NEWLINE+)* ~ (catch | stmt?) ~ end_kw
+}
 
-body = { 
-    do_kw ~ "\n"* ~ (!(end_kw | catch) ~ stmt ~ "\n"+)* ~ (catch | stmt?) ~ end_kw
-} 
-
-catch = { catch_kw ~ ident ~ "\n"* ~ (!end_kw ~ stmt ~ "\n"+)* ~ stmt? }
+catch = { catch_kw ~ ident ~ "\n"* ~ (!end_kw ~ stmt ~ NEWLINE+)* ~ stmt? }
 
 range = { number ~ ".." ~ number }
 
@@ -82,23 +94,19 @@ alias = {
     alias_kw ~ ident ~ assign ~ java_class
 }
 
-java_class = !{ "class"  ~ dotted_access }
+java_class = !{ "class" ~ dotted_access }
 
 new_class = {
     "new!" ~ aliasable ~ call_args
 }
-static = { "static!" ~ aliasable ~ call_args? }
+static    = { "static!" ~ aliasable ~ call_args? }
 
-
-dict = { 
-	LBRACKET ~ NEWLINE* 
-	~ key_value ~ ("," ~ NEWLINE* ~ key_value?)*
-	~ NEWLINE*
-	~ RBRACKET 
+dict = {
+    LBRACKET ~ NEWLINE* ~ key_value ~ ("," ~ NEWLINE* ~ key_value?)* ~ NEWLINE* ~ RBRACKET
 }
 
 key_value = {
-	string ~  ":" ~ expr
+    string ~ ":" ~ expr
 }
 
 call = {
@@ -118,104 +126,101 @@ callable = _{
   | ident
 }
 
-query = { query_kw ~ datasource ~  query_body }
-query_body = { do_kw ~  sql* ~  end_kw }
-sql = { !end_kw ~ ANY }
-json = { 
-	json_kw ~ ident
+query      = { query_kw ~ datasource ~ query_body ~ call_args? }
+query_body = { do_kw ~ sql* ~ end_kw }
+sql        = { !end_kw ~ ANY }
+json       = {
+    json_kw ~ ident
 }
-log       = { log_kw ~  log_level ~  string }
-log_level = { "INFO" | "WARN" | "ERROR" | "DEBUG" }
+log        = { log_kw ~ log_level ~ string }
+log_level  = { "INFO" | "WARN" | "ERROR" | "DEBUG" }
 
+string  = _{ fmt_string | normal_string }
+number  = @{ ASCII_DIGIT+ }
+bool    = @{ "true" | "false" }
+nothing = @{ "nothing" }
+unit    = @{ "()" }
 
-
-string = _{ fmt_string | normal_string }
-number        =  @{ ASCII_DIGIT+ }
-bool          =  @{ "true" | "false" }
-nothing       =  @{ "nothing" }
-unit          =  @{ "()" }
-
-dotted_access = { (alias_ident | ident) ~ ("." ~ ident)+ }
+dotted_access =  { (alias_ident | ident) ~ ("." ~ ident)+ }
 alias_ident   = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
-access_ident  = { ident }
+access_ident  =  { ident }
 ident         = @{ !(keywords ~ !(ASCII_ALPHA | ASCII_DIGIT | "_")) ~ ident_inner }
-ident_inner         = { (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
+ident_inner   =  { (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_")* }
 
-datasource    =  { "niku" | "datawarehouse" }
-http_verb     = { "GET" | "POST" | "PATCH" }
-keywords = {
-	for_kw      
-	| do_kw      
-	| end_kw      
-	| query_kw    
-	| static_kw   
-	| http_kw     
-	| json_kw     
-	| let_kw
-	| alias_kw
-	| in_kw
-	| else_kw
-	| catch
+datasource = { "niku" | "datawarehouse" }
+http_verb  = { "GET" | "POST" | "PATCH" }
+keywords   = {
+    for_kw
+  | do_kw
+  | end_kw
+  | query_kw
+  | static_kw
+  | http_kw
+  | json_kw
+  | let_kw
+  | alias_kw
+  | in_kw
+  | else_kw
+  | catch
 }
 
-do_kw        = _{ "do" }
-catch_kw        = _{ "catch" }
-else_kw        = _{ "else" }
-in_kw        = _{ "in" }
-let_kw        = _{ "let" }
-alias_kw        = _{ "alias" }
-for_kw        = _{ "for" }
-end_kw        = _{ "end" }
-log_kw        = _{ "log!" }
+do_kw    = _{ "do" }
+catch_kw = _{ "catch" }
+else_kw  = _{ "else" }
+in_kw    = _{ "in" }
+let_kw   = _{ "let" }
+alias_kw = _{ "alias" }
+for_kw   = _{ "for" }
+end_kw   = _{ "end" }
+log_kw   = _{ "log!" }
 
-query_kw      = _{ "query!" }
-static_kw     = _{ "static!" }
-http_kw       = _{ "http!" }
-json_kw       = _{ "json!" }
+soap_kw  = _{ "soap!" }
+query_kw  = _{ "query!" }
+static_kw = _{ "static!" }
+http_kw   = _{ "http!" }
+json_kw   = _{ "json!" }
 
-
-fmt_string = ${
+fmt_string    = ${
     "f\"" ~ (fmt | character)* ~ "\""
 }
-fmt        = !{ "{" ~  expr ~ "}" }
-normal_string = {
+fmt           = !{ "{" ~ expr ~ "}" }
+normal_string =  {
     "\"" ~ character* ~ "\""
 }
 character     = @{
     !"\"" // if the following text is not ""
-    ~ ANY // then consume one character
+  ~ ANY // then consume one character
 }
-
 
 // INFIX OPERATORS
 infix_op = _{
-	eq  
-	| neq 
-	| lt  
-	| lte 
-	| gt  
-	| gte 
-	| plus
-	| sub 
-	| mul 
-	| div
+    eq
+  | neq
+  | lte
+  | gte
+  | lt
+  | gt
+  | plus
+  | sub
+  | mul
+  | div
 }
-	eq   = { "==" }
-	neq  = { "!=" }
-	lt   = { "<" }
-	lte  = { "<=" }
-	gt   = { ">" }
-	gte  = { ">=" }
-	plus = { "+" }
-	sub  = { "-" }
-	mul  = { "*" }
-	div  = { "/" }
+eq       =  { "==" }
+neq      =  { "!=" }
+lt       =  { "<" }
+lte      =  { "<=" }
+gt       =  { ">" }
+gte      =  { ">=" }
+plus     =  { "+" }
+sub      =  { "-" }
+mul      =  { "*" }
+div      =  { "/" }
 
-assign = _{ "=" }
+assign   = _{ "=" }
 LBRACKET = _{ "{" }
 RBRACKET = _{ "}" }
 
 WHITESPACE = _{ " " | "\t" }
-COMMENT = _{ "(*" ~ (!"*)" ~ ANY)* ~ "*)" }
+COMMENT    = _{ "(*" ~ (!"*)" ~ ANY)* ~ "*)" }
 
 allws = _{ " " | "\t" | NEWLINE }

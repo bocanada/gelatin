@@ -1,10 +1,15 @@
 pub mod tags;
 
-use std::collections::HashMap;
+use std::{borrow::Borrow, collections::HashMap, io};
 
-use crate::gelatin::ast::{Call, Expr, HttpVerb, Ident, Name, Node, QueryType, Stmt, Value};
+use xml::{writer::XmlEvent, EventWriter};
 
-use self::tags::{Core, Gel, Sql, Tag};
+use crate::{
+    gelatin::ast::{Call, Context, Expr, Ident, Name, Node, QueryType, Stmt},
+    transpiler::tags::{Soap, SoapEnv},
+};
+
+use self::tags::{Core, Gel, Sql};
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[allow(dead_code)]
@@ -20,222 +25,146 @@ enum Libraries {
     Xog,
 }
 
-pub struct Transpiler {
+pub struct Transpiler<W> {
     env: HashMap<String, Expr>,
+    writer: EventWriter<W>,
 }
 
-impl Transpiler {
-    pub fn new() -> Self {
+macro_rules! close {
+    ($writer:expr) => {
+        $writer.write::<XmlEvent<'static>>(XmlEvent::end_element().into())?;
+    };
+}
+macro_rules! auto_close {
+    ($event:expr, $writer:expr) => {
+        $writer.write($event)?;
+        $writer.write::<XmlEvent<'static>>(XmlEvent::end_element().into())?;
+    };
+}
+
+impl<W: io::Write> Transpiler<W> {
+    pub fn new(sink: W, prettify: bool) -> Self {
         Self {
             env: HashMap::new(),
+            writer: EventWriter::new_with_config(
+                sink,
+                xml::EmitterConfig::default().perform_indent(prettify),
+            ),
         }
     }
 
-    pub fn as_tags(&mut self, node: Node) -> Tag {
+    pub fn transpile<I>(&mut self, it: I) -> xml::writer::Result<()>
+    where
+        I: IntoIterator<Item = Node>,
+    {
+        //       <gel:script xmlns:core="jelly:core"
+        // xmlns:gel="">
+        self.writer.write(
+            XmlEvent::start_element(Gel::Script)
+                .ns("gel", "jelly:com.niku.union.gel.GELTagLibrary")
+                .ns("core", "jelly:core"),
+        )?;
+
+        for node in it {
+            self.as_tags(node)?;
+        }
+
+        close!(self.writer);
+        Ok(())
+    }
+
+    pub fn as_tags(&mut self, node: Node) -> xml::writer::Result<()> {
         match node {
             Node::Stmt(stmt) => self.transpile_node(stmt),
             Node::Expr(expr) => self.transpile_node(Stmt::Expr { expr }),
         }
     }
 
-    pub fn transpile_node(&mut self, stmt: Stmt) -> Tag {
+    pub fn transpile_node(&mut self, stmt: Stmt) -> xml::writer::Result<()> {
         match stmt {
             Stmt::Expr {
-                expr: qry @ Expr::Query { .. },
-            } => self.query("_".into(), qry),
-            Stmt::Expr { expr } => Tag::Core(Core::Expr { expr }),
-            Stmt::Let(name, value @ Expr::Value(_)) => Tag::Core(Core::Set { var: name, value }),
-            Stmt::Let(name, Expr::Instance { class, args }) => Tag::Core(Core::New {
-                class_name: class,
-                var: name,
-                args: args
-                    .into_iter()
-                    .map(|arg| Core::Arg {
-                        r#type: None,
-                        value: arg,
-                    })
-                    .collect(),
-            }),
-            Stmt::Let(name, Expr::Http { verb, url, body }) => {
-                let mut tags = vec![
-                    Tag::Core(Core::New {
-                        class_name: "java.net.URL".into(),
-                        var: Ident::from("remoteURL"),
-                        args: vec![Core::Arg {
-                            r#type: Some("java.lang.String".into()),
-                            value: *url,
-                        }],
-                    }),
-                    Tag::Core(Core::Set {
-                        var: name.clone(),
-                        value: Expr::call("remoteURL.openConnection", vec![]),
-                    }),
-                    Tag::Core(Core::Expr {
-                        expr: Expr::call(
-                            format!("{name}.setRequestMethod"),
-                            vec![verb.to_string().into()],
-                        ),
-                    }),
-                    Tag::Core(Core::Expr {
-                        expr: Expr::call(format!("{name}.setDoOutput"), vec![true.into()]),
-                    }),
-                ];
+                expr: expr @ Expr::Query { .. },
+            } => self.transpile_node(Stmt::Let("_".into(), expr)),
+            Stmt::While { test, body } => {
+                let val = test.as_value(Context::Text);
 
-                if !matches!(verb, HttpVerb::GET) {
-                    tags.push(Tag::Core(Core::Expr {
-                        expr: Expr::call(format!("{name}.setDoInput"), vec![true.into()]),
-                    }))
-                }
+                self.writer
+                    .write(XmlEvent::start_element(Core::While).attr("test", val.borrow()))?;
 
-                for expr in body {
-                    let Stmt::Expr {
-                        expr:
-                            Expr::Call(Call {
-                                name: Name::Ident(func),
-                                mut args,
-                            }),
-                    } = expr
-                    else {
-                        unreachable!()
-                    };
+                self.transpile_vec(body)?;
 
-                    match func.as_str() {
-                        "timeout" => {
-                            let Some(timeout) = args.pop() else {
-                                unreachable!()
-                            };
-
-                            tags.push(Tag::Core(Core::Expr {
-                                expr: Expr::call(
-                                    format!("{name}.setConnectTimeout"),
-                                    vec![timeout.clone()],
-                                ),
-                            }));
-
-                            tags.push(Tag::Core(Core::Expr {
-                                expr: Expr::call(format!("{name}.setReadTimeout"), vec![timeout]),
-                            }));
-                        }
-                        "headers" => {
-                            let Some(Expr::Dict(dict)) = args.pop() else {
-                                unreachable!("kek")
-                            };
-
-                            tags.extend(dict.into_iter().map(|(k, v)| {
-                                Tag::Core(Core::Expr {
-                                    expr: Expr::call(
-                                        format!("{name}.setRequestProperty"),
-                                        vec![k.into(), v],
-                                    ),
-                                })
-                            }));
-                        }
-                        "json" => {
-                            let Some(Expr::Dict(dict)) = args.pop() else {
-                                unreachable!("kek")
-                            };
-                            tags.push(Tag::Core(Core::Expr {
-                                expr: Expr::call(
-                                    format!("{name}.setRequestProperty"),
-                                    vec!["content-type".into(), "application/json".into()],
-                                ),
-                            }));
-
-                            tags.push(Tag::Core(Core::New {
-                                class_name: "java.io.OutputStreamWriter".into(),
-                                var: format!("{name}_w").into(),
-                                args: vec![Core::Arg {
-                                    r#type: Some("java.io.OutputStream".into()),
-                                    value: Expr::call(format!("{name}.getOutputStream"), vec![]),
-                                }],
-                            }));
-
-                            Self::create_json_tags(dict, name.as_str(), &mut tags);
-
-                            tags.push(Tag::Core(Core::Expr {
-                                expr: Expr::call(
-                                    format!("{name}_payload.write"),
-                                    vec![Expr::Ident(format!("{name}_w").into())],
-                                ),
-                            }));
-                            tags.push(Tag::Core(Core::Expr {
-                                expr: Expr::call(format!("{name}_w.flush"), vec![]),
-                            }))
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-
-                tags.push(Tag::Core(Core::Expr {
-                    expr: Expr::call(format!("{name}.connect"), vec![]),
-                }));
-
-                Tag::Macro(tags)
+                close!(self.writer);
+                Ok(())
             }
-            Stmt::Let(name, Expr::Json { expr }) => {
-                let tags = vec![
-                    Tag::Core(Core::Set {
-                        var: "input_stream".into(),
-                        value: Expr::call(format!("{expr}.getInputStream"), vec![]),
-                    }),
-                    Tag::Core(Core::New {
-                        class_name: "java.io.InputStreamReader".into(),
-                        var: "input_reader".into(),
-                        args: vec![Core::Arg {
-                            r#type: Some("java.io.InputStream".into()),
-                            value: Expr::Ident("input_stream".into()),
-                        }],
-                    }),
-                    Tag::Core(Core::New {
-                        class_name: "java.io.BufferedReader".into(),
-                        var: "buf_reader".into(),
-                        args: vec![Core::Arg {
-                            r#type: Some("java.io.InputStreamReader".into()),
-                            value: Expr::Ident("input_reader".into()),
-                        }],
-                    }),
-                    Tag::Core(Core::New {
-                        class_name: "java.lang.StringBuilder".into(),
-                        var: "sb".into(),
-                        args: vec![],
-                    }),
-                    // <core:set value='${{buf_reader.readLine()}}' var='line'/>
-                    Tag::Core(Core::Set {
-                        var: "line".into(),
-                        value: Expr::call("buf_reader.readLine", vec![]),
-                    }),
-                    // <!-- READ STREAM LINE BY LINE AND BUILD THE STRING -->\n\
-                    // <core:while test='${{line != null}}'>\n\
-                    Tag::Core(Core::While {
-                        test: Expr::Value(Value::Str("${line != null}".to_string())),
-                        body: vec![
-                            //     <core:expr value='${{sb.append(line)}}'/>\n\
-                            Tag::Core(Core::Expr {
-                                expr: Expr::call("sb.append", vec![Expr::Ident("line".into())]),
-                            }),
-                            //     <core:set var='line' value='${{buf_reader.readLine()}}'/>\n\
-                            Tag::Core(Core::Set {
-                                var: "line".into(),
-                                value: Expr::call("buf_reader.readLine", vec![]),
-                            }),
-                        ],
-                    }),
-                    // </core:while>
-                    // <core:new className='org.json.JSONObject' var='{name}'>
-                    //     <core:arg type='java.lang.String' value='${{sb.toString()}}'/>
-                    // </core:new>
-                    //
-                    Tag::Core(Core::New {
-                        class_name: "org.json.JSONObject".into(),
-                        var: name,
-                        args: vec![Core::Arg {
-                            r#type: Some("java.lang.String".into()),
-                            value: Expr::call("sb.toString", vec![]),
-                        }],
-                    }),
-                ];
+            Stmt::Expr { expr } => {
+                let value = expr.as_value(Context::Text);
+                auto_close!(
+                    XmlEvent::start_element(Core::Expr).attr("value", &value),
+                    self.writer
+                );
 
-                Tag::Macro(tags)
+                Ok(())
+            }
+            Stmt::Let(name, soap @ Expr::Soap { .. }) => self.transpile_soap(&name, soap),
+            Stmt::Let(_, Expr::Http { .. } | Expr::Json { .. }) => {
+                unreachable!("macro expanded")
+            }
+            Stmt::Let(_, _) => self.let_stmt(stmt),
+            Stmt::Alias { alias: ident, cls } => {
+                self.env.insert(ident.to_string(), cls);
+                Ok(())
+            }
+            Stmt::ForEach { .. } => self.for_each(stmt),
+            Stmt::Log { level, message } => {
+                auto_close!(
+                    XmlEvent::start_element(Gel::Log)
+                        .attr("level", level.as_str())
+                        .attr("message", &message),
+                    self.writer
+                );
+
+                Ok(())
+            }
+            Stmt::If { .. } => self.if_stmt(stmt),
+            Stmt::Block(block) => self.transpile_vec(block),
+            Stmt::Catch { name, body } => {
+                self.writer
+                    .write(XmlEvent::start_element(Core::Catch).attr("var", name.as_str()))?;
+
+                self.transpile_vec(body)?;
+
+                close!(self.writer);
+                Ok(())
+            }
+        }
+    }
+
+    fn let_stmt(&mut self, stmt: Stmt) -> xml::writer::Result<()> {
+        match stmt {
+            Stmt::Let(name, query @ Expr::Query { .. }) => self.query(&name, query),
+            Stmt::Let(name, value @ Expr::Value(_)) => {
+                let str = value.as_value(Context::Text);
+                auto_close!(
+                    XmlEvent::start_element(Core::Set)
+                        .attr("value", &str)
+                        .attr("var", name.as_str()),
+                    self.writer
+                );
+
+                Ok(())
+            }
+            Stmt::Let(name, Expr::Instance { class, args }) => {
+                self.writer.write(
+                    XmlEvent::start_element(Core::New)
+                        .attr("className", class.to_string().as_str())
+                        .attr("var", name.as_str()),
+                )?;
+
+                self.transpile_args(args)?;
+
+                close!(self.writer);
+
+                Ok(())
             }
             Stmt::Let(name, Expr::StaticField(Name::Dotted { parent, mut attrs })) => {
                 assert!(attrs.len() == 1);
@@ -243,11 +172,15 @@ impl Transpiler {
                     unreachable!()
                 };
 
-                Tag::Core(Core::GetStatic {
-                    var: name,
-                    class_name: *parent,
-                    field: attr,
-                })
+                auto_close!(
+                    XmlEvent::start_element(Core::GetStatic)
+                        .attr("var", name.as_str())
+                        .attr("className", parent.to_string().as_str())
+                        .attr("field", attr.as_str()),
+                    self.writer
+                );
+
+                Ok(())
             }
             Stmt::Let(
                 name,
@@ -260,147 +193,264 @@ impl Transpiler {
                 let Some(Name::Ident(method)) = attrs.last().cloned() else {
                     unreachable!()
                 };
-                Tag::Core(Core::InvokeStatic {
-                    var: name,
-                    method,
-                    class_name: *parent,
-                    args: args
-                        .into_iter()
-                        .map(|arg| Core::Arg {
-                            r#type: None,
-                            value: arg,
-                        })
-                        .collect(),
-                })
+
+                self.writer.write(
+                    XmlEvent::start_element(Core::InvokeStatic)
+                        .attr("className", parent.to_string().as_str())
+                        .attr("method", method.as_str())
+                        .attr("var", name.as_str()),
+                )?;
+
+                self.transpile_args(args)?;
+
+                close!(self.writer);
+                Ok(())
             }
-            Stmt::Let(name, query @ Expr::Query { .. }) => self.query(name, query),
-            Stmt::Let(name, expr) => Tag::Core(Core::Set {
-                var: name,
-                value: expr,
-            }),
-            Stmt::Alias { alias: ident, cls } => {
-                self.env.insert(ident.to_string(), cls.clone());
-                Tag::Noop
+            Stmt::Let(name, expr) => {
+                let expr = expr.as_value(Context::Text);
+                auto_close!(
+                    XmlEvent::start_element(Core::Set)
+                        .attr("var", name.as_str())
+                        .attr("value", expr.borrow()),
+                    self.writer
+                );
+
+                Ok(())
             }
-            Stmt::ForEach { var, items, body } => Tag::Core(Core::ForEach {
+
+            _ => unreachable!(),
+        }
+    }
+
+    fn for_each(&mut self, stmt: Stmt) -> xml::writer::Result<()> {
+        match stmt {
+            Stmt::ForEach {
                 var,
-                items,
-                body: body
-                    .into_iter()
-                    .map(|stmt| self.transpile_node(stmt))
-                    .collect(),
-            }),
+                items: Expr::Range { start, end, step },
+                body,
+            } => {
+                // <core:forEach var='i' items='1, 2, 3'>
 
-            Stmt::Log { level, message } => Tag::Gel(Gel::Log {
-                level,
-                message,
-                category: None,
-            }),
+                self.writer.write(
+                    XmlEvent::start_element(Core::ForEach)
+                        .attr("var", var.as_str())
+                        .attr("start", format!("{start}").as_str())
+                        .attr("step", format!("{step}").as_str())
+                        .attr("end", format!("{end}").as_str()),
+                )?;
 
+                self.transpile_vec(body)?;
+
+                close!(self.writer);
+                Ok(())
+            }
+
+            Stmt::ForEach { var, items, body } => {
+                // <core:forEach var='i' items='1, 2, 3'>
+
+                self.writer.write(
+                    XmlEvent::start_element(Core::ForEach)
+                        .attr("var", var.as_str())
+                        .attr("items", items.as_value(Context::Text).borrow()),
+                )?;
+
+                self.transpile_vec(body)?;
+
+                close!(self.writer);
+                Ok(())
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn if_stmt(&mut self, stmt: Stmt) -> xml::writer::Result<()> {
+        match stmt {
+            // if/else case,
+            // make it into a core:choose.
             Stmt::If {
                 test,
                 body,
                 alt: Some(alt),
-            } => Tag::Core(Core::Choose {
-                branches: vec![
-                    Core::When {
-                        test,
-                        body: body
-                            .into_iter()
-                            .map(|stmt| self.transpile_node(stmt))
-                            .collect(),
-                    },
-                    Core::Otherwise {
-                        body: alt
-                            .into_iter()
-                            .map(|stmt| self.transpile_node(stmt))
-                            .collect(),
-                    },
-                ],
-            }),
+            } => {
+                self.writer.write(XmlEvent::start_element(Core::Choose))?;
+                self.writer.write(
+                    XmlEvent::start_element(Core::When)
+                        .attr("test", test.as_value(Context::Text).borrow()),
+                )?;
+
+                self.transpile_vec(body)?;
+
+                close!(self.writer);
+                self.writer
+                    .write(XmlEvent::start_element(Core::Otherwise))?;
+
+                self.transpile_vec(alt)?;
+
+                close!(self.writer);
+                close!(self.writer);
+                Ok(())
+            }
+
             Stmt::If {
                 test,
                 body,
                 alt: None,
-            } => Tag::Core(Core::If {
-                test,
-                body: body
-                    .into_iter()
-                    .map(|stmt| self.transpile_node(stmt))
-                    .collect(),
-            }),
-            Stmt::Block(block) => Tag::Macro(
-                block
-                    .into_iter()
-                    .map(|stmt| self.transpile_node(stmt))
-                    .collect(),
-            ),
-            Stmt::Catch { name, body, no_err } => Tag::Macro(vec![
-                Tag::Core(Core::Catch {
-                    var: name.clone(),
-                    body: no_err
-                        .into_iter()
-                        .map(|stmt| self.transpile_node(stmt))
-                        .collect(),
-                }),
-                Tag::Core(Core::If {
-                    test: Expr::Infix {
-                        lhs: Box::new(Expr::Ident(Name::Ident(name))),
-                        op: crate::gelatin::ast::InfixOp::Neq,
-                        rhs: Box::new(Expr::Value(Value::Nothing)),
-                    },
-                    body: body
-                        .into_iter()
-                        .map(|stmt| self.transpile_node(stmt))
-                        .collect(),
-                }),
-            ]),
-        }
-    }
+            } => {
+                self.writer.write(
+                    XmlEvent::start_element(Core::If)
+                        .attr("test", test.as_value(Context::Text).borrow()),
+                )?;
 
-    fn create_json_tags(map: HashMap<String, Expr>, bind_to: &str, tags: &mut Vec<Tag>) {
-        tags.push(Tag::Core(Core::New {
-            class_name: "org.json.JSONObject".into(),
-            var: format!("{bind_to}_payload").into(),
-            args: vec![],
-        }));
+                self.transpile_vec(body)?;
 
-        for (k, mut v) in map {
-            if let Expr::Dict(inner) = v {
-                Self::create_json_tags(inner, &format!("{bind_to}_{}", k.as_str()), tags);
-                v = Expr::Ident(k.as_str().into());
+                close!(self.writer);
+                Ok(())
             }
 
-            tags.push(Tag::Core(Core::Expr {
-                expr: Expr::call(format!("{bind_to}_payload.put"), vec![k.into(), v]),
-            }));
+            _ => unreachable!(),
         }
     }
 
-    fn query(&self, name: Ident, expr: Expr) -> Tag {
+    fn query(&mut self, name: &Ident, expr: Expr) -> xml::writer::Result<()> {
         match expr {
             Expr::Query {
                 datasource,
                 r#type,
                 query,
+                params,
             } => {
-                let sql = match r#type {
-                    QueryType::SELECT => Sql::Query {
-                        var: name,
-                        sql: query.to_string(),
-                    },
-                    QueryType::UPDATE | QueryType::INSERT | QueryType::DELETE => Sql::Update {
-                        var: name,
-                        sql: query.to_string(),
-                    },
+                let tag = match r#type {
+                    QueryType::SELECT => Sql::Query,
+                    QueryType::UPDATE | QueryType::INSERT | QueryType::DELETE => Sql::Update,
                 };
 
-                Tag::Macro(vec![
-                    Tag::Gel(Gel::SetDatasource { db_id: datasource }),
-                    Tag::Sql(sql),
-                ])
+                auto_close!(
+                    XmlEvent::start_element(Gel::SetDatasource)
+                        .attr("dbId", datasource.to_string().as_str()),
+                    self.writer
+                );
+
+                self.writer
+                    .write(XmlEvent::start_element(tag).attr("var", name.as_str()))?;
+
+                self.writer
+                    .write(XmlEvent::cdata(query.to_string().as_str()))?;
+
+                for param in params {
+                    auto_close!(
+                        XmlEvent::start_element(Sql::Param)
+                            .attr("value", &param.as_value(Context::Text)),
+                        self.writer
+                    );
+                }
+
+                close!(self.writer);
+
+                Ok(())
             }
             _ => unreachable!(),
         }
+    }
+
+    fn transpile_vec(&mut self, body: Vec<Stmt>) -> xml::writer::Result<()> {
+        for stmt in body {
+            self.transpile_node(stmt)?;
+        }
+
+        Ok(())
+    }
+
+    fn transpile_args(&mut self, args: Vec<Expr>) -> xml::writer::Result<()> {
+        for arg in args {
+            let arg = arg.as_value(Context::Text);
+            auto_close!(
+                XmlEvent::start_element(Core::Arg).attr("value", arg.borrow()),
+                self.writer
+            );
+        }
+
+        Ok(())
+    }
+
+    fn transpile_soap(&mut self, name: &Ident, soap: Expr) -> Result<(), xml::writer::Error> {
+        //       <soapenv:Body>
+        //                     <NikuDataBus xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../xsd/nikuxog_user.xsd">
+        //                             <Header action="write" externalSource="NIKU" objectType="user" version="16.0.2.861" />
+        //                             <Users>
+        //                                     <User externalId=" " userName="${row.email}" oldUserName="${row.unique_name}" userLanguage="Spanish" userLocale="es" userUid="${row.unique_name}">
+        //                                             <PersonalInformation emailAddress="${row.email}" firstName="${row.first_name}" lastName="${row.last_name}" />
+        //                                     </User>
+        //                             </Users>
+        //                     </NikuDataBus>
+        //       </soapenv:Body>
+        let Expr::Soap {
+            endpoint,
+            header,
+            body,
+        } = soap
+        else {
+            unreachable!()
+        };
+
+        //   <soap:invoke endpoint="internal" var="result">
+        self.writer.write(
+            XmlEvent::start_element(Soap::Invoke.as_str())
+                .attr("endpoint", &endpoint)
+                .attr("var", name.as_str()),
+        )?;
+
+        //   <soap:message>
+        self.writer
+            .write(XmlEvent::start_element(Soap::Message.as_str()))?;
+
+        //     <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xog="http://www.niku.com/xog">
+        self.writer.write(
+            XmlEvent::start_element(SoapEnv::Envelope.as_str())
+                .ns("soapenv", "http://schemas.xmlsoap.org/soap/envelope/")
+                .ns("xog", "http://www.niku.com/xog"),
+        )?;
+
+        if let Some(header) = header {
+            //       <soapenv:Header>
+            self.writer
+                .write(XmlEvent::start_element(SoapEnv::Header.as_str()))?;
+
+            // skip the start document tag
+            for el in header {
+                match el.as_writer_event() {
+                    Some(el) => self.writer.write(el)?,
+                    None => break,
+                }
+            }
+
+            //       </soapenv:Header>
+            close!(self.writer);
+        }
+
+        if let Some(body) = body {
+            //       <soapenv:Body>
+            self.writer
+                .write(XmlEvent::start_element(SoapEnv::Body.as_str()))?;
+
+            // skip the start document tag
+            for el in body {
+                match el.as_writer_event() {
+                    Some(el) => self.writer.write(el)?,
+                    None => break,
+                }
+            }
+
+            //       </soapenv:Body>
+            close!(self.writer);
+        }
+
+        //     </soapenv:Envelope>
+        close!(self.writer);
+        //   </soap:message>
+        close!(self.writer);
+        // </soap:invoke>
+        close!(self.writer);
+
+        Ok(())
     }
 }

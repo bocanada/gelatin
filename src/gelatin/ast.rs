@@ -1,11 +1,11 @@
-use std::{collections::HashMap, fmt::Write};
+use std::{borrow::Cow, collections::HashMap, fmt::Write, sync::Arc};
 
 use sqlparser::ast::Statement;
 
 use crate::gelatin::Error;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Ident(String);
+pub struct Ident(Arc<str>);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Name {
@@ -15,16 +15,16 @@ pub enum Name {
 
 impl<S> From<S> for Name
 where
-    S: Into<String>,
+    S: Into<Arc<str>>,
 {
     fn from(value: S) -> Self {
-        let value: String = value.into();
+        let value: Arc<str> = value.into();
         let mut names = value.split('.');
-        let parent = Self::Ident(Ident::from(names.next().unwrap()));
+        let parent = Self::Ident(Ident::from(names.next().expect("expected a name")));
 
         let mut attrs = Vec::new();
         for name in names {
-            attrs.push(name.into())
+            attrs.push(name.into());
         }
 
         if attrs.is_empty() {
@@ -50,15 +50,15 @@ impl From<&str> for Value {
     }
 }
 
-impl From<String> for Value {
-    fn from(value: String) -> Self {
-        Self::Str(value)
-    }
-}
-
 impl From<i64> for Value {
     fn from(value: i64) -> Self {
         Self::Int(value)
+    }
+}
+
+impl From<Arc<str>> for Expr {
+    fn from(value: Arc<str>) -> Self {
+        Self::Value(Value::Str(value))
     }
 }
 
@@ -79,7 +79,7 @@ pub enum Value {
     Unit,
     Bool(bool),
     Int(i64),
-    Str(String),
+    Str(Arc<str>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -105,7 +105,7 @@ pub enum QueryType {
     DELETE,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Call {
     pub name: Name,
     pub args: Vec<Expr>,
@@ -121,9 +121,11 @@ pub enum InfixOp {
     Neq,
     Lt,
     Gt,
+    Lte,
+    Gte,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Infix {
         lhs: Box<Expr>,
@@ -145,11 +147,12 @@ pub enum Expr {
     },
     Ident(Name),
     Alias(Ident),
-    Dict(HashMap<String, Expr>),
+    Dict(HashMap<Arc<str>, Expr>),
     Query {
         datasource: Datasource,
         r#type: QueryType,
         query: Statement,
+        params: Vec<Expr>,
     },
     Http {
         verb: HttpVerb,
@@ -163,6 +166,11 @@ pub enum Expr {
         class: Name,
         args: Vec<Expr>,
     },
+    Soap {
+        endpoint: Arc<str>,
+        header: Option<Vec<xml::reader::XmlEvent>>,
+        body: Option<Vec<xml::reader::XmlEvent>>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -174,7 +182,7 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Error => "ERROR",
             Self::Warn => "WARN",
@@ -184,12 +192,11 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Stmt {
     Block(Vec<Stmt>),
     Catch {
         name: Ident,
-        no_err: Vec<Stmt>,
         body: Vec<Stmt>,
     },
     Let(Ident, Expr),
@@ -205,6 +212,10 @@ pub enum Stmt {
         items: Expr,
         body: Vec<Stmt>,
     },
+    While {
+        test: Expr,
+        body: Vec<Stmt>,
+    },
     If {
         test: Expr,
         body: Vec<Stmt>,
@@ -212,11 +223,11 @@ pub enum Stmt {
     },
     Log {
         level: LogLevel,
-        message: String,
+        message: Arc<str>,
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Node {
     Expr(Expr),
     Stmt(Stmt),
@@ -225,15 +236,15 @@ pub enum Node {
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Name::Ident(ident) => write!(f, "{ident}"),
-            Name::Dotted {
+            Self::Ident(ident) => write!(f, "{ident}"),
+            Self::Dotted {
                 parent: box parent,
                 attrs,
             } => {
-                write!(f, "{}", parent)?;
+                write!(f, "{parent}")?;
 
                 for attr in attrs {
-                    write!(f, ".{}", attr)?;
+                    write!(f, ".{attr}")?;
                 }
 
                 Ok(())
@@ -250,7 +261,7 @@ impl Ident {
 
 impl<S> From<S> for Ident
 where
-    S: Into<String>,
+    S: Into<Arc<str>>,
 {
     fn from(value: S) -> Self {
         Self(value.into())
@@ -296,42 +307,53 @@ pub enum Context {
 
 impl Name {
     /// Returns a string representation of the `Value` as a java value.
-    pub fn as_value(&self, ctx: Context) -> String {
+    pub fn as_value(&self, ctx: Context) -> Cow<'_, str> {
         if matches!(ctx, Context::Text) {
             // use an expr to get the value out of the ident
-            return format!("${{{self}}}");
+            return Cow::Owned(format!("${{{self}}}"));
         }
-        self.to_string()
+        Cow::Owned(self.to_string())
     }
 }
 
 impl std::fmt::Display for InfixOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InfixOp::Add => write!(f, "+"),
-            InfixOp::Sub => write!(f, "-"),
-            InfixOp::Mul => write!(f, "*"),
-            InfixOp::Div => write!(f, "/"),
-            InfixOp::Eq => write!(f, "=="),
-            InfixOp::Neq => write!(f, "!="),
-            InfixOp::Lt => write!(f, "<"),
-            InfixOp::Gt => write!(f, ">"),
+            Self::Add => write!(f, "+"),
+            Self::Sub => write!(f, "-"),
+            Self::Mul => write!(f, "*"),
+            Self::Div => write!(f, "/"),
+            Self::Eq => write!(f, "=="),
+            Self::Neq => write!(f, "!="),
+            Self::Lt => write!(f, "<"),
+            Self::Gt => write!(f, ">"),
+            Self::Lte => write!(f, "<="),
+            Self::Gte => write!(f, ">="),
         }
     }
 }
+
 impl Expr {
+    pub fn infix(lhs: Self, op: InfixOp, rhs: Self) -> Self {
+        Self::Infix {
+            lhs: Box::new(lhs),
+            op,
+            rhs: Box::new(rhs),
+        }
+    }
+
     pub fn get_static<N: Into<Name>>(name: N) -> Self {
         Self::StaticField(name.into())
     }
 
-    pub fn static_invoke<N: Into<Name>>(name: N, args: Vec<Expr>) -> Self {
+    pub fn static_invoke<N: Into<Name>>(name: N, args: Vec<Self>) -> Self {
         Self::Static(Call {
             name: name.into(),
             args,
         })
     }
 
-    pub fn call<N: Into<Name>>(name: N, args: Vec<Expr>) -> Self {
+    pub fn call<N: Into<Name>>(name: N, args: Vec<Self>) -> Self {
         Self::Call(Call {
             name: name.into(),
             args,
@@ -339,17 +361,11 @@ impl Expr {
     }
 
     /// Returns a string representation of the `Value` as a java value.
-    pub fn as_value(&self, ctx: Context) -> String {
+    pub fn as_value(&self, ctx: Context) -> Cow<'_, str> {
         match self {
-            Expr::Value(v) => v.as_value(ctx),
-            Expr::Ident(v) => {
-                if matches!(ctx, Context::Text) {
-                    // use an expr to get the value out of the ident
-                    return format!("${{{v}}}");
-                }
-                v.to_string()
-            }
-            Expr::Call(Call { name: func, args }) => {
+            Self::Value(v) => v.as_value(ctx),
+            Self::Ident(v) => v.as_value(ctx),
+            Self::Call(Call { name: func, args }) => {
                 let mut buff = String::new();
                 let should_expr = matches!(ctx, Context::Text);
 
@@ -365,13 +381,13 @@ impl Expr {
                 buff.extend(
                     args.iter()
                         .map(|arg| arg.as_value(ctx))
-                        .intersperse(", ".to_string()),
+                        .intersperse(", ".into()),
                 );
                 let _ = write!(buff, "){}", if should_expr { "}" } else { "" },);
 
-                buff
+                buff.into()
             }
-            Expr::Dict(map) => {
+            Self::Dict(map) => {
                 let mut buff = String::new();
                 let _ = write!(buff, "{{");
 
@@ -383,48 +399,48 @@ impl Expr {
 
                 let _ = write!(buff, "}}");
 
-                buff
+                buff.into()
             }
-            Expr::Query { .. }
-            | Expr::Http { .. }
-            | Expr::Json { .. }
-            | Expr::Instance { .. }
-            | Expr::Range { .. }
-            | Expr::Alias(_)
-            | Expr::Static(_)
-            | Expr::Func { .. } => unreachable!("{self:?}"),
-            Expr::Infix { lhs, op, rhs } => {
+            Self::Infix { lhs, op, rhs } => {
                 if matches!(ctx, Context::Text) {
-                    return format!(
+                    return Cow::Owned(format!(
                         "${{({} {op} {})}}",
                         lhs.as_value(Context::Expr),
                         rhs.as_value(Context::Expr)
-                    );
+                    ));
                 }
-                format!("({} {op} {})", lhs.as_value(ctx), rhs.as_value(ctx))
+                Cow::Owned(format!(
+                    "({} {op} {})",
+                    lhs.as_value(ctx),
+                    rhs.as_value(ctx)
+                ))
             }
-            Expr::StaticField(name) => {
-                if matches!(ctx, Context::Text) {
-                    return format!("${{({})}}", name.as_value(Context::Expr));
-                }
-                name.as_value(ctx)
-            }
+            Self::StaticField(name) => name.as_value(ctx),
+            Self::Query { .. }
+            | Self::Http { .. }
+            | Self::Json { .. }
+            | Self::Instance { .. }
+            | Self::Range { .. }
+            | Self::Alias(_)
+            | Self::Static(_)
+            | Self::Func { .. }
+            | Self::Soap { .. } => unreachable!("{self:?}"),
         }
     }
 }
 
 impl Value {
     /// Returns a string representation of the `Value` as a java value.
-    pub fn as_value(&self, ctx: Context) -> String {
+    pub fn as_value(&self, ctx: Context) -> Cow<'_, str> {
         match self {
-            Self::Nothing => "null".to_string(),
-            Self::Bool(b) => format!("{b}"),
-            Self::Int(n) => format!("{n}"),
+            Self::Nothing => Cow::Borrowed("null"),
+            Self::Bool(b) => Cow::Owned(format!("{b}")),
+            Self::Int(n) => Cow::Owned(format!("{n}")),
             Self::Str(str) => {
                 if matches!(ctx, Context::Expr) {
-                    format!("\"{str}\"")
+                    Cow::Owned(format!("\"{str}\""))
                 } else {
-                    str.to_owned()
+                    Cow::Borrowed(str)
                 }
             }
             Self::Unit => unreachable!("unit value should not be used"),
@@ -438,44 +454,27 @@ impl std::fmt::Display for Ident {
     }
 }
 
-impl std::fmt::Display for Value {
+impl std::fmt::Display for Datasource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Str(str) => write!(f, "{str}"),
-            val => write!(f, "{}", val.as_value(Context::Text)),
+            Self::Niku => write!(f, "niku"),
+            Self::Dwh => write!(f, "datawarehouse"),
         }
     }
 }
 
-impl std::fmt::Display for Datasource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl HttpVerb {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            Datasource::Niku => write!(f, "niku"),
-            Datasource::Dwh => write!(f, "datawarehouse"),
+            Self::POST => "POST",
+            Self::GET => "GET",
+            Self::PATCH => "PATCH",
         }
     }
 }
 
 impl std::fmt::Display for HttpVerb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HttpVerb::POST => write!(f, "POST"),
-            HttpVerb::GET => write!(f, "GET"),
-            HttpVerb::PATCH => write!(f, "PATCH"),
-        }
-    }
-}
-
-impl std::fmt::Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expr::Value(v) => write!(f, "{v}"),
-            Expr::Ident(v) => write!(f, "{v}"),
-            Expr::Alias(v) => write!(f, "{v}"),
-            Expr::Call(..) => {
-                write!(f, "${{{}}}", self.as_value(Context::Expr))
-            }
-            _ => todo!(),
-        }
+        self.as_str().fmt(f)
     }
 }
