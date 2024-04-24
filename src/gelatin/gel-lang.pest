@@ -26,7 +26,7 @@ expression = _{
 value = _{
     number
   | dict
-  | nothing
+  | null
   | bool
   | string
   | dotted_access
@@ -37,6 +37,7 @@ value = _{
 soap = {
     soap_kw ~ string ~ soap_body
 }
+
 
 soap_body = {
     do_kw ~ NEWLINE* 
@@ -67,7 +68,7 @@ if_body = _{
 }
 
 else_body = {
-    "else" ~ NEWLINE* ~ (!end_kw ~ stmt ~ NEWLINE+)* ~ stmt?
+    else_kw ~ NEWLINE* ~ (!end_kw ~ stmt ~ NEWLINE+)*
 }
 
 body = {
@@ -110,7 +111,7 @@ key_value = {
 }
 
 call = {
-    callable ~ call_args
+    !keywords ~ callable ~ call_args
 }
 
 call_args = { value ~ (value)* }
@@ -138,7 +139,7 @@ log_level  = { "INFO" | "WARN" | "ERROR" | "DEBUG" }
 string  = _{ fmt_string | normal_string }
 number  = @{ ASCII_DIGIT+ }
 bool    = @{ "true" | "false" }
-nothing = @{ "nothing" }
+null = @{ "null" }
 unit    = @{ "()" }
 
 dotted_access =  { (alias_ident | ident) ~ ("." ~ ident)+ }
@@ -161,6 +162,7 @@ keywords   = {
   | alias_kw
   | in_kw
   | else_kw
+  | then_kw
   | catch
 }
 
@@ -172,8 +174,9 @@ let_kw   = _{ "let" }
 alias_kw = _{ "alias" }
 for_kw   = _{ "for" }
 end_kw   = _{ "end" }
-log_kw   = _{ "log!" }
+then_kw   = _{ "then" }
 
+log_kw   = _{ "log!" }
 soap_kw  = _{ "soap!" }
 query_kw  = _{ "query!" }
 static_kw = _{ "static!" }
