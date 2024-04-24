@@ -435,7 +435,13 @@ impl Value {
         match self {
             Self::Nothing => Cow::Borrowed("null"),
             Self::Bool(b) => Cow::Owned(format!("{b}")),
-            Self::Int(n) => Cow::Owned(format!("{n}")),
+            Self::Int(n) => {
+                if matches!(ctx, Context::Text) {
+                    Cow::Owned(format!("${{n}}"))
+                } else {
+                    Cow::Owned(format!("{n}"))
+                }
+            },
             Self::Str(str) => {
                 if matches!(ctx, Context::Expr) {
                     Cow::Owned(format!("\"{str}\""))
