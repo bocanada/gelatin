@@ -119,7 +119,7 @@ impl<'a, D: Dialect> Parser<'a, D> {
                 match pair.as_rule() {
                     Rule::unit => Ok(Expr::Value(Value::Unit)),
                     Rule::bool => Ok(Expr::Value(Value::Bool(pair.as_str() == "true"))),
-                    Rule::nothing => Ok(Expr::Value(Value::Nothing)),
+                    Rule::null => Ok(Expr::Value(Value::Nothing)),
                     Rule::number => Ok(Expr::Value(Value::Int(
                         pair.as_str().trim().parse().unwrap(),
                     ))),
